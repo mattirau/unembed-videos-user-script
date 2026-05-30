@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unembed Videos
 // @namespace    https://github.com/mattirau/unembed-videos-user-script
-// @version      1.1.0
+// @version      1.2.0
 // @description  Replace embedded videos with a button linking to the original video page
 // @author       mattirau
 // @match        *://*/*
@@ -15,9 +15,9 @@
   const PROVIDERS = [
     {
       name: 'YouTube',
-      // matches youtube.com/embed/ID and youtu.be/ID iframes
       pattern: /(?:youtube\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{11})/,
       url: (id) => `https://www.youtube.com/watch?v=${id}`,
+      thumbnail: (id) => `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
       color: '#FF0000',
     },
     {
@@ -168,44 +168,77 @@
       const m = src.match(provider.pattern);
       if (m) {
         const id = m[1] || m[2];
-        return { name: provider.name, href: provider.url(id), color: provider.color };
+        const href = provider.url(id);
+        const thumbnail = provider.thumbnail ? provider.thumbnail(id) : null;
+        return { name: provider.name, href, color: provider.color, thumbnail };
       }
     }
     return null;
   }
 
-  function makeReplacement(iframe, info) {
-    const width = iframe.width || iframe.offsetWidth || iframe.style.width || '100%';
-    const height = iframe.height || iframe.offsetHeight || iframe.style.height || '180px';
+  function makeThumbnailReplacement(info) {
+    const a = document.createElement('a');
+    a.href = info.href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.cssText = 'display:block; position:relative; line-height:0;';
 
-    const wrap = document.createElement('div');
-    wrap.className = 'unembed-btn-wrap';
-    wrap.style.width = typeof width === 'number' ? `${width}px` : width;
-    wrap.style.height = typeof height === 'number' ? `${height}px` : height;
+    if (info.thumbnail) {
+      const img = document.createElement('img');
+      img.src = info.thumbnail;
+      img.style.cssText = 'width:100%; border-radius:4px;';
+      img.alt = `${info.name} video thumbnail`;
 
-    const label = document.createElement('div');
-    label.className = 'unembed-label';
-    label.textContent = info.name;
+      const play = document.createElement('span');
+      play.textContent = '▶';
+      play.style.cssText = [
+        'position:absolute; top:50%; left:50%; transform:translate(-50%,-50%)',
+        'font-size:48px; color:white; text-shadow:0 0 8px rgba(0,0,0,0.8)',
+        'pointer-events:none; line-height:1',
+      ].join(';');
 
-    const link = document.createElement('a');
-    link.className = 'unembed-btn';
-    link.href = info.href;
-    link.target = '_self';
-    link.rel = 'noopener noreferrer';
-    link.style.background = info.color;
-    link.textContent = 'Open video';
+      a.append(img, play);
+    } else {
+      // Fallback: plain button card
+      a.style.cssText = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'unembed-btn-wrap';
 
-    const newTabBtn = document.createElement('button');
-    newTabBtn.className = 'unembed-newtab';
-    newTabBtn.textContent = 'Open in new tab';
-    newTabBtn.addEventListener('click', () => {
-      window.open(info.href, '_blank', 'noopener,noreferrer');
-    });
+      const label = document.createElement('div');
+      label.className = 'unembed-label';
+      label.textContent = info.name;
 
-    wrap.appendChild(label);
-    wrap.appendChild(link);
-    wrap.appendChild(newTabBtn);
-    return wrap;
+      const btn = document.createElement('span');
+      btn.className = 'unembed-btn';
+      btn.style.background = info.color;
+      btn.textContent = 'Open video';
+
+      const newTabBtn = document.createElement('button');
+      newTabBtn.className = 'unembed-newtab';
+      newTabBtn.textContent = 'Open in new tab';
+      newTabBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.open(info.href, '_blank', 'noopener,noreferrer');
+      });
+
+      wrap.append(label, btn, newTabBtn);
+      a.appendChild(wrap);
+    }
+
+    return a;
+  }
+
+  function makeReplacement(el, info) {
+    const width = el.offsetWidth || el.getAttribute?.('width') || el.style?.width || '100%';
+    const height = el.offsetHeight || el.getAttribute?.('height') || el.style?.height || '180px';
+
+    const replacement = makeThumbnailReplacement(info);
+    if (!info.thumbnail) {
+      const inner = replacement.querySelector('.unembed-btn-wrap') || replacement;
+      inner.style.width = typeof width === 'number' ? `${width}px` : width;
+      inner.style.height = typeof height === 'number' ? `${height}px` : height;
+    }
+    return replacement;
   }
 
   function injectStyle() {
@@ -229,60 +262,47 @@
     iframe.replaceWith(replacement);
   }
 
-  // Reddit uses <shreddit-player> custom element instead of iframes
-  function processShredditPlayer(el) {
+  // Reddit stores iframe HTML encoded in a `html` attribute on <shreddit-embed>
+  function processShredditEmbed(el) {
     if (el.dataset.unembedDone) return;
+    const html = el.getAttribute('html') || '';
+    if (!html) return;
+
+    // Extract src from the encoded iframe markup
+    const srcMatch = html.match(/src="([^"]+)"/);
+    if (!srcMatch) return;
+    const src = srcMatch[1].replace(/&amp;/g, '&');
+    const info = resolve(src);
+    if (!info) return;
+
     el.dataset.unembedDone = '1';
-
-    // Find the permalink from the nearest post article
-    const article = el.closest('article, shreddit-post, [data-testid="post-container"]');
-    let href = null;
-    if (article) {
-      const link = article.querySelector('a[href*="/r/"][href*="/comments/"]');
-      href = link?.href;
-    }
-    // Fall back to the v.redd.it src attribute
-    if (!href) href = el.getAttribute('src') || 'https://www.reddit.com';
-
-    const info = {
-      name: 'Reddit video',
-      href,
-      color: '#FF4500',
-    };
-
     injectStyle();
-    const replacement = makeReplacement(el, info);
-    // Copy dimensions from the player element
-    const w = el.offsetWidth || el.getAttribute('width') || '100%';
-    const h = el.offsetHeight || el.getAttribute('height') || '180px';
-    replacement.style.width = typeof w === 'number' ? `${w}px` : w;
-    replacement.style.height = typeof h === 'number' ? `${h}px` : h;
-    el.replaceWith(replacement);
+    const target = el.closest('shreddit-aspect-ratio') || el;
+    target.replaceWith(makeReplacement(el, info));
   }
 
   function scanAll() {
     document.querySelectorAll('iframe').forEach(processIframe);
-    document.querySelectorAll('shreddit-player').forEach(processShredditPlayer);
+    document.querySelectorAll('shreddit-embed').forEach(processShredditEmbed);
   }
 
   // Initial scan after DOM is ready
   scanAll();
 
-  // Watch for dynamically injected iframes AND late src assignments
-  // (TikTok's SDK adds the iframe first, then sets src via setAttribute)
+  // Watch for dynamically injected elements AND late src/html attribute assignments
   const observer = new MutationObserver((mutations) => {
     for (const mut of mutations) {
       if (mut.type === 'attributes') {
         if (mut.target.tagName === 'IFRAME') processIframe(mut.target);
-        if (mut.target.tagName === 'SHREDDIT-PLAYER') processShredditPlayer(mut.target);
+        if (mut.target.tagName === 'SHREDDIT-EMBED') processShredditEmbed(mut.target);
         continue;
       }
       for (const node of mut.addedNodes) {
         if (node.nodeType !== 1) continue;
         if (node.tagName === 'IFRAME') processIframe(node);
-        if (node.tagName === 'SHREDDIT-PLAYER') processShredditPlayer(node);
+        if (node.tagName === 'SHREDDIT-EMBED') processShredditEmbed(node);
         node.querySelectorAll?.('iframe').forEach(processIframe);
-        node.querySelectorAll?.('shreddit-player').forEach(processShredditPlayer);
+        node.querySelectorAll?.('shreddit-embed').forEach(processShredditEmbed);
       }
     }
   });
@@ -291,6 +311,6 @@
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['src', 'data-src', 'packaged-media-json'],
+    attributeFilter: ['src', 'data-src', 'html'],
   });
 })();
