@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unembed Videos
 // @namespace    https://github.com/mattirau/unembed-videos-user-script
-// @version      1.2.0
+// @version      1.3.0
 // @description  Replace embedded videos with a button linking to the original video page
 // @author       mattirau
 // @match        *://*/*
@@ -262,6 +262,22 @@
     iframe.replaceWith(replacement);
   }
 
+  // <lite-tiktok> facade used by some sites (e.g. KnowYourMeme) instead of a real iframe
+  function processLiteTiktok(el) {
+    if (el.dataset.unembedDone) return;
+    const videoId = el.getAttribute('videoid');
+    if (!videoId) return;
+    el.dataset.unembedDone = '1';
+    injectStyle();
+    const info = {
+      name: 'TikTok',
+      href: `https://www.tiktok.com/video/${videoId}`,
+      color: '#010101',
+      thumbnail: null,
+    };
+    el.replaceWith(makeReplacement(el, info));
+  }
+
   // Reddit stores iframe HTML encoded in a `html` attribute on <shreddit-embed>
   function processShredditEmbed(el) {
     if (el.dataset.unembedDone) return;
@@ -284,6 +300,7 @@
   function scanAll() {
     document.querySelectorAll('iframe').forEach(processIframe);
     document.querySelectorAll('shreddit-embed').forEach(processShredditEmbed);
+    document.querySelectorAll('lite-tiktok').forEach(processLiteTiktok);
   }
 
   // Initial scan after DOM is ready
@@ -295,14 +312,17 @@
       if (mut.type === 'attributes') {
         if (mut.target.tagName === 'IFRAME') processIframe(mut.target);
         if (mut.target.tagName === 'SHREDDIT-EMBED') processShredditEmbed(mut.target);
+        if (mut.target.tagName === 'LITE-TIKTOK') processLiteTiktok(mut.target);
         continue;
       }
       for (const node of mut.addedNodes) {
         if (node.nodeType !== 1) continue;
         if (node.tagName === 'IFRAME') processIframe(node);
         if (node.tagName === 'SHREDDIT-EMBED') processShredditEmbed(node);
+        if (node.tagName === 'LITE-TIKTOK') processLiteTiktok(node);
         node.querySelectorAll?.('iframe').forEach(processIframe);
         node.querySelectorAll?.('shreddit-embed').forEach(processShredditEmbed);
+        node.querySelectorAll?.('lite-tiktok').forEach(processLiteTiktok);
       }
     }
   });
