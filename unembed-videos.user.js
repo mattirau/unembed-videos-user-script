@@ -236,9 +236,14 @@
   // Initial scan after DOM is ready
   scanAll();
 
-  // Watch for dynamically injected iframes
+  // Watch for dynamically injected iframes AND late src assignments
+  // (TikTok's SDK adds the iframe first, then sets src via setAttribute)
   const observer = new MutationObserver((mutations) => {
     for (const mut of mutations) {
+      if (mut.type === 'attributes' && mut.target.tagName === 'IFRAME') {
+        processIframe(mut.target);
+        continue;
+      }
       for (const node of mut.addedNodes) {
         if (node.nodeType !== 1) continue;
         if (node.tagName === 'IFRAME') processIframe(node);
@@ -247,5 +252,10 @@
     }
   });
 
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['src', 'data-src'],
+  });
 })();
