@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unembed Videos
 // @namespace    https://github.com/mattirau/unembed-videos-user-script
-// @version      1.0.1
+// @version      1.1.0
 // @description  Replace embedded videos with a button linking to the original video page
 // @author       mattirau
 // @match        *://*/*
@@ -229,8 +229,40 @@
     iframe.replaceWith(replacement);
   }
 
+  // Reddit uses <shreddit-player> custom element instead of iframes
+  function processShredditPlayer(el) {
+    if (el.dataset.unembedDone) return;
+    el.dataset.unembedDone = '1';
+
+    // Find the permalink from the nearest post article
+    const article = el.closest('article, shreddit-post, [data-testid="post-container"]');
+    let href = null;
+    if (article) {
+      const link = article.querySelector('a[href*="/r/"][href*="/comments/"]');
+      href = link?.href;
+    }
+    // Fall back to the v.redd.it src attribute
+    if (!href) href = el.getAttribute('src') || 'https://www.reddit.com';
+
+    const info = {
+      name: 'Reddit video',
+      href,
+      color: '#FF4500',
+    };
+
+    injectStyle();
+    const replacement = makeReplacement(el, info);
+    // Copy dimensions from the player element
+    const w = el.offsetWidth || el.getAttribute('width') || '100%';
+    const h = el.offsetHeight || el.getAttribute('height') || '180px';
+    replacement.style.width = typeof w === 'number' ? `${w}px` : w;
+    replacement.style.height = typeof h === 'number' ? `${h}px` : h;
+    el.replaceWith(replacement);
+  }
+
   function scanAll() {
     document.querySelectorAll('iframe').forEach(processIframe);
+    document.querySelectorAll('shreddit-player').forEach(processShredditPlayer);
   }
 
   // Initial scan after DOM is ready
@@ -240,14 +272,17 @@
   // (TikTok's SDK adds the iframe first, then sets src via setAttribute)
   const observer = new MutationObserver((mutations) => {
     for (const mut of mutations) {
-      if (mut.type === 'attributes' && mut.target.tagName === 'IFRAME') {
-        processIframe(mut.target);
+      if (mut.type === 'attributes') {
+        if (mut.target.tagName === 'IFRAME') processIframe(mut.target);
+        if (mut.target.tagName === 'SHREDDIT-PLAYER') processShredditPlayer(mut.target);
         continue;
       }
       for (const node of mut.addedNodes) {
         if (node.nodeType !== 1) continue;
         if (node.tagName === 'IFRAME') processIframe(node);
+        if (node.tagName === 'SHREDDIT-PLAYER') processShredditPlayer(node);
         node.querySelectorAll?.('iframe').forEach(processIframe);
+        node.querySelectorAll?.('shreddit-player').forEach(processShredditPlayer);
       }
     }
   });
@@ -256,6 +291,6 @@
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['src', 'data-src'],
+    attributeFilter: ['src', 'data-src', 'packaged-media-json'],
   });
 })();
