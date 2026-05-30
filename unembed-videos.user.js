@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unembed Videos
 // @namespace    https://github.com/mattirau/unembed-videos-user-script
-// @version      1.0.0
+// @version      1.0.1
 // @description  Replace embedded videos with a button linking to the original video page
 // @author       mattirau
 // @match        *://*/*
